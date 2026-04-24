@@ -31,24 +31,104 @@ NTS = {
     "income_tax":"법인세비용",
 }
 
+# ── 파싱 헬퍼 ─────────────────────────────────────────────────
+
+def _parse_trial_balance(ws, target):
+    """Japanese trial balance: col[0]=account, col[4]=current balance (当期残高)."""
+    for row in ws.iter_rows(values_only=True):
+        if not row or not isinstance(row[0], str):
+            continue
+        name = row[0].strip()
+        if not name or name.startswith('['):
+            continue
+        if '合計' in name or name.endswith('計'):
+            continue
+        val = row[4] if len(row) > 4 else None
+        if not isinstance(val, (int, float)) or val == 0:
+            continue
+        target[name] = val
+
+
+def _parse_korean_bs(ws, bs):
+    """Korean two-column BS: [asset_name, asset_val, liability_name, liability_val, ...]."""
+    SKIP_KW = ('총계', '합계', 'total')
+    for row in ws.iter_rows(values_only=True):
+        if not row:
+            continue
+        # Left pair (assets)
+        n0 = row[0].strip() if isinstance(row[0], str) else None
+        v1 = row[1] if len(row) > 1 and isinstance(row[1], (int, float)) else None
+        if n0 and v1 is not None and not any(k in n0.lower() for k in SKIP_KW):
+            bs[n0] = v1
+        # Right pair (liabilities / equity)
+        n2 = row[2].strip() if len(row) > 2 and isinstance(row[2], str) else None
+        v3 = row[3] if len(row) > 3 and isinstance(row[3], (int, float)) else None
+        if n2 and v3 is not None and not any(k in n2.lower() for k in SKIP_KW):
+            bs[n2] = v3
+
+
+def _parse_korean_pl(ws, pl):
+    """Korean PL: name in col[3], value in col[4]. Keep section totals + income tax."""
+    for row in ws.iter_rows(values_only=True):
+        name_cell = row[3] if len(row) > 3 else None
+        val_cell  = row[4] if len(row) > 4 else None
+        if not isinstance(name_cell, str):
+            continue
+        name = name_cell.strip()
+        if not name or name.startswith('<'):
+            break  # date-section marker → stop
+        if not isinstance(val_cell, (int, float)):
+            continue
+        lo = name.lower()
+        if lo.startswith('total') or 'income tax' in lo or '법인세' in lo:
+            pl[name] = val_cell
+
+
+def _parse_generic(ws, target):
+    """Generic: first text cell = key, last numeric cell = value."""
+    for row in ws.iter_rows(values_only=True):
+        texts = [str(c).strip() for c in row if isinstance(c, str) and str(c).strip()]
+        nums  = [c for c in row if isinstance(c, (int, float))]
+        if texts and nums and not texts[0].startswith("="):
+            target[texts[0]] = nums[-1]
+
 # ── 파싱 ──────────────────────────────────────────────────────
 
 def parse_excel(stream, bs_hint=None, pl_hint=None) -> Tuple[Dict, Dict]:
     wb = openpyxl.load_workbook(stream, data_only=True)
     bs, pl = {}, {}
     for name in wb.sheetnames:
-        ws = wb[name]; lo = name.lower(); target = None
-        if bs_hint and name == bs_hint:    target = bs
-        elif pl_hint and name == pl_hint:  target = pl
+        ws  = wb[name]
+        lo  = name.lower()
+        target = None
+
+        if bs_hint and name == bs_hint:
+            target = bs
+        elif pl_hint and name == pl_hint:
+            target = pl
         elif not (bs_hint or pl_hint):
-            if any(k in lo for k in ["bs","balance","asset","재무상태","대차"]):   target = bs
-            elif any(k in lo for k in ["pl","p&l","income","profit","loss","손익"]): target = pl
-        if target is None: continue
-        for row in ws.iter_rows(values_only=True):
-            texts = [str(c).strip() for c in row if isinstance(c, str) and str(c).strip()]
-            nums  = [c for c in row if isinstance(c, (int, float))]
-            if texts and nums and not texts[0].startswith("="):
-                target[texts[0]] = nums[-1]
+            if any(k in lo for k in ["bs","balance","asset","재무상태","대차"]) or name == '貸':
+                target = bs
+            elif any(k in lo for k in ["pl","p&l","income","profit","loss","손익"]) or name == '損':
+                target = pl
+
+        if target is None:
+            if len(wb.sheetnames) == 1:
+                target = bs  # 단일 시트 파일 → BS로 처리 (홍콩법인 등)
+            else:
+                continue
+
+        # 시트 형식에 맞는 파서 선택
+        if name in ('貸', '損'):
+            _parse_trial_balance(ws, target)
+        elif '재무상태표' in name:
+            _parse_korean_bs(ws, bs)
+        elif '손익계산서' in name:
+            _parse_korean_pl(ws, pl)
+        elif len(wb.sheetnames) == 1:
+            _parse_korean_bs(ws, bs)  # 단일 시트 = 한국형 2컬럼 BS
+        else:
+            _parse_generic(ws, target)
     return bs, pl
 
 
@@ -71,7 +151,6 @@ def parse_pdf(stream) -> Dict:
 
 
 def detect_currency_year(stream, fmt: str) -> Tuple[str, int]:
-    """파일에서 통화·연도 자동 감지"""
     cur, year = "", 2025
     currencies = ["USD","JPY","CNY","EUR","SGD","GBP","HKD","AUD","CAD","THB","VND"]
     if fmt == "excel":
@@ -106,55 +185,102 @@ def keyword_map(name: str, ctx: str) -> Optional[str]:
     n = _norm(name); raw = name.lower()
     def has(*kws): return any(k in n or k in raw for k in kws)
 
-    if has("total ","합계","소계","subtotal","net income","net profit","net loss",
+    # ── PL 소계 행 우선 매핑 (generic skip 전) ───────────────────
+    if ctx == "pl":
+        if has("total income", "총수익"):                        return "other_sales"
+        if has("total cogs", "total cost of goods"):             return "other_purchases"
+        if has("total expense", "total operating expense"):      return "other_sga"
+        # 일본어 PL 합계 행 → skip
+        if has("当期純損益", "経常損益", "売上総損益", "税引前", "営業損益"): return "skip"
+        # 영문 net/gross 합계 → skip
+        if has("net income", "net profit", "net loss", "net other income",
+               "net ordinary", "gross profit"): return "skip"
+
+    # ── BS equity 에서 당기순손익 → 이익잉여금 ──────────────────
+    if ctx != "pl":
+        if has("net income", "net profit", "net loss",
+               "当期純損益", "当期純利益", "当期純損失"):          return "retained_earnings"
+
+    # ── Generic skip ──────────────────────────────────────────────
+    if has("total ","합계","소계","subtotal",
            "gross profit","net ordinary","ordinary income","trading income total",
            "cost of sales total","operating expenses total","balance sheet","profit and loss"):
         return "skip"
     if re.match(r"^[\d\s\-]+$", n): return "skip"
 
+    # ── PL 컨텍스트 ───────────────────────────────────────────────
     if ctx == "pl":
-        if has("sales","revenue","trading income","service income","marketing sales","pr service","매출"):
+        if has("sales","revenue","trading income","service income","marketing sales","pr service","매출",
+               "shipping","delivery income","refund","seller discount"):
             return "related_sales" if has("related","intercompany","parent","subsidiary") else "other_sales"
-        if has("cost of goods","costofgoods","cost of sales","costofsales","cogs","매출원가"):
-            return "related_purchases" if has("related","intercompany","parent") else "other_purchases"
-        if has("salary","salaries","wage","payroll","compensation","급여"):
-            return "salary_parent" if has("dispatch","parent","모회사") else "salary_other"
-        if has("rent","lease expense","operating lease","임차료"): return "rent"
-        if has("research","development","r&d","연구개발"):          return "rnd"
-        if has("bad debt","doubtful","대손"):                        return "bad_debt"
-        if has("interest income","이자수익"):                        return "interest_income"
-        if has("interest expense","finance cost","이자비용"):        return "interest_expense"
-        if has("dividend","배당"):
+        if has("cost of goods","costofgoods","cost of sales","costofsales","cogs","매출원가",
+               "仕入","棚卸","売上原価"):                         return "other_purchases"
+        if has("salary","salaries","wage","payroll","compensation","급여","給与","給料"):
+            return "salary_parent" if has("dispatch","parent","모회사","派遣") else "salary_other"
+        if has("rent","lease expense","operating lease","임차료","家賃","賃借"): return "rent"
+        if has("research","development","r&d","연구개발","研究"):  return "rnd"
+        if has("bad debt","doubtful","대손"):                      return "bad_debt"
+        if has("interest income","이자수익","受取利息"):           return "interest_income"
+        if has("interest expense","finance cost","이자비용","支払利息"): return "interest_expense"
+        if has("dividend","배당","配当"):
             return "dividend_income" if has("income","receiv") else "other_non_op_income"
-        if has("income tax","tax expense","tax provision","법인세"):  return "income_tax"
-        if has("exchange gain","fx gain","환차익"):                   return "other_non_op_income"
-        if has("exchange loss","fx loss","환차손"):                   return "other_non_op_expense"
+        if has("income tax","tax expense","tax provision","법인세","法人税"): return "income_tax"
+        if has("exchange gain","fx gain","환차익"):                return "other_non_op_income"
+        if has("exchange loss","fx loss","환차손"):                return "other_non_op_expense"
         return "other_sga"
 
-    if has("cash","checking","saving","현금","예금","통장"):          return "cash"
-    if has("bank","account") and not has("payable","liabilit","bank fee","bank charge","bank service"): return "cash"
-    if re.search(r"\b\d{3,}\b", name) and ctx != "pl":              return "cash"
-    if has("account receivable","accounts receivable","trade receivable","매출채권"):
+    # ── BS 컨텍스트 ───────────────────────────────────────────────
+    # 현금·예금 (한국어·일본어·영어)
+    if has("cash","checking","saving","현금","예금","통장",
+           "現金","普通預金","当座預金","預金"):                   return "cash"
+    if has("bank","account") and not has("payable","liabilit","bank fee","bank charge","bank service"):
+        return "cash"
+    if re.search(r"\b\d{3,}\b", name) and ctx != "pl":         return "cash"
+
+    # 매출채권
+    if has("account receivable","accounts receivable","trade receivable","매출채권","売掛金","受取手形"):
         return "related_ar" if has("related","intercompany","parent","subsidiary") else "other_ar"
-    if has("other receivable","receivable"):                          return "other_ar"
-    if has("inventory","재고"):                                       return "inventory"
-    if has("marketable securities","short term investment"):          return "securities"
-    if has("long term investment","equity investment","투자유가"):    return "investments"
-    if has("land","building","real estate","property plant"):         return "land_buildings"
-    if has("machinery","equipment","vehicle","furniture","fixture","leasehold improvement","right of use","rou asset"): return "other_fixed"
-    if has("intangible","goodwill","patent","trademark"):             return "intangibles"
-    if has("prepaid","deposit","deferred charge","advance payment"):  return "other_assets"
-    if has("account payable","accounts payable","trade payable","매입채무"):
+    if has("other receivable","receivable","미수금"):            return "other_ar"
+
+    # 재고
+    if has("inventory","재고","棚卸","商品","製品"):              return "inventory"
+
+    # 유가증권·투자
+    if has("marketable securities","short term investment"):     return "securities"
+    if has("long term investment","equity investment","투자유가","投資有価証券"): return "investments"
+
+    # 유형자산
+    if has("land","building","real estate","property plant","土地","建物","建設仮勘定"): return "land_buildings"
+    if has("machinery","equipment","vehicle","furniture","fixture","leasehold improvement",
+           "right of use","rou asset","機械","車両","器具","備品"): return "other_fixed"
+    if has("intangible","goodwill","patent","trademark","のれん","無形"): return "intangibles"
+    if has("prepaid","deposit","deferred charge","advance payment","선급","보증금"): return "other_assets"
+
+    # 매입채무
+    if has("account payable","accounts payable","trade payable","매입채무","買掛金","支払手形"):
         return "related_ap" if has("related","intercompany","parent") else "other_ap"
-    if has("loan from member","member loan","shareholder loan","loan from shareholder","loan from owner","loan from parent"): return "related_borrowings"
-    if has("bank loan","note payable","bond payable","borrowing","차입금"): return "other_borrowings"
-    if has("interest payable","accrued","wages payable","salary payable","미지급"): return "accrued"
-    if has("gst","vat","tax payable","deferred revenue","lease liabilit"): return "other_liabilities"
-    if re.search(r"\b(member|owner)\s*[a-z0-9]\b", n):              return "capital"
-    if has("member contribution","owner contribution","share capital","paid in capital","common stock","자본금"): return "capital"
+
+    # 차입금
+    if has("loan from member","member loan","shareholder loan","loan from shareholder",
+           "loan from owner","loan from parent"): return "related_borrowings"
+    if has("bank loan","note payable","bond payable","borrowing","차입금","借入"):
+        return "other_borrowings"
+
+    # 미지급금·기타부채
+    if has("other payable","accrued","interest payable","wages payable","salary payable","미지급"):
+        return "accrued"
+    if has("gst","vat","tax payable","deferred revenue","lease liabilit",
+           "未払法人税","未払消費税","未払金"):                    return "other_liabilities"
+
+    # 자본
+    if re.search(r"\b(member|owner)\s*[a-z0-9]\b", n):         return "capital"
+    if has("member contribution","owner contribution","share capital","paid in capital",
+           "common stock","opening balance equity","자본금","資本金"): return "capital"
     if has("owner","member") and has("capital","contribution","share"): return "capital"
-    if has("additional paid","share premium","capital surplus","자본잉여"): return "capital_surplus"
-    if has("retained earning","accumulated deficit","current year earning","이익잉여"): return "retained_earnings"
+    if has("additional paid","share premium","capital surplus","자본잉여","資本準備金"): return "capital_surplus"
+    if has("retained earning","accumulated deficit","current year earning",
+           "이익잉여금","繰越利益剰余金","利益剰余金"):            return "retained_earnings"
+
     return None
 
 
@@ -179,10 +305,22 @@ retained_earnings,other_equity,related_sales,other_sales,related_purchases,other
 salary_parent,salary_other,rent,rnd,bad_debt,other_sga,interest_income,dividend_income,
 debt_forgiveness,other_non_op_income,interest_expense,other_non_op_expense,income_tax,skip
 
-Rules: totals/subtotals/net income→skip, "Loan from Member"→related_borrowings,
-"Member 1/2"/"Owner A"→capital, bank account names with numbers→cash,
-"Current Year Earnings" in equity→retained_earnings, CostofGoodsSold→other_purchases,
-all unmatched PL expenses→other_sga.
+Rules:
+- totals/subtotals/net income/gross profit → skip
+- "Total Income","총수익" → other_sales
+- "Total COGS","Total Cost of Goods" → other_purchases
+- "Total Expense","Total Operating Expense" → other_sga
+- "Income Tax Provision/Payable" in PL → income_tax
+- "Income Tax Payable" in BS → other_liabilities
+- "Loan from Member"→related_borrowings
+- "Member 1/2"/"Owner A"/"Opening Balance Equity"→capital
+- bank account names with numbers→cash
+- "Net Income"/"当期純損益金額" in BS equity section→retained_earnings
+- "Retained Earnings"+"Net Income" both in BS equity→both map to retained_earnings (summed)
+- "Account Payable"/"Other Payable*" for service company → accrued (미지급금)
+- "Other Receivables_HQ" → other_assets
+- Japanese: 普通預金→cash, 資本金→capital, 未払法人税等→other_liabilities, 法人税等(PL)→income_tax
+- all unmatched PL expenses→other_sga
 
 Return ONLY JSON: {{"name":"code",...}}"""
     try:
@@ -317,12 +455,6 @@ def write_sheet(wb, company, sheet_name, d, eoy, avg, prior):
 
 
 def convert(companies: list) -> bytes:
-    """
-    companies: list of dict with keys:
-      company, sheet_name, bs_stream, pl_stream, bs_fmt, pl_fmt,
-      eoy_rate, avg_rate, prior_re
-    Returns: Excel file bytes
-    """
     import openpyxl as xl
     wb = xl.Workbook(); wb.remove(wb.active)
 
