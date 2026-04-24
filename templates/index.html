@@ -176,7 +176,15 @@
 <script>
 let companyCount = 0;
 
-const CURRENCIES = ["USD","JPY","CNY","EUR","SGD","GBP","HKD","AUD","CAD","THB","VND","MYR","IDR","PHP"];
+const CURRENCIES = [
+  "USD","JPY","EUR","GBP","CAD","CHF","AUD","NZD","CNH","CNY","HKD",
+  "TWD","MNT","KZT","THB","SGD","IDR","MYR","PHP","VND","BND",
+  "INR","PKR","BDT","KHR","MOP","NPR","LKR","UZS","MMK",
+  "MXN","BRL","ARS","CLP","COP",
+  "SEK","DKK","NOK","RUB","HUF","PLN","CZK","RON",
+  "SAR","QAR","ILS","JOD","KWD","BHD","AED","TRY","OMR",
+  "ZAR","EGP","KES","LYD","ETB","FJD"
+];
 
 function addCompany() {
   const idx = companyCount++;
@@ -212,31 +220,15 @@ function addCompany() {
 
     <!-- PDF 업로드 -->
     <div id="pdfZone_${idx}" style="display:none">
-      <div class="pdf-files">
-        <div>
-          <p class="pdf-label">📊 재무상태표 (Balance Sheet)</p>
-          <div class="file-zone" id="dropBS_${idx}" onclick="document.getElementById('fileBS_${idx}').click()"
-               ondragover="handleDragOver(event,this)" ondragleave="handleDragLeave(event,this)"
-               ondrop="handleDrop(event,'fileBS_${idx}',this)">
-            <div class="file-icon">📄</div>
-            <p>BS PDF 업로드</p>
-            <p class="file-name" id="nameBS_${idx}"></p>
-            <input type="file" name="bs_${idx}" id="fileBS_${idx}" accept=".pdf"
-                   onchange="showName(this,'nameBS_${idx}','dropBS_${idx}')">
-          </div>
-        </div>
-        <div>
-          <p class="pdf-label">📈 손익계산서 (Profit & Loss)</p>
-          <div class="file-zone" id="dropPL_${idx}" onclick="document.getElementById('filePL_${idx}').click()"
-               ondragover="handleDragOver(event,this)" ondragleave="handleDragLeave(event,this)"
-               ondrop="handleDrop(event,'filePL_${idx}',this)">
-            <div class="file-icon">📄</div>
-            <p>PL PDF 업로드</p>
-            <p class="file-name" id="namePL_${idx}"></p>
-            <input type="file" name="pl_${idx}" id="filePL_${idx}" accept=".pdf"
-                   onchange="showName(this,'namePL_${idx}','dropPL_${idx}')">
-          </div>
-        </div>
+      <div class="file-zone" id="dropPDF_${idx}" onclick="document.getElementById('filePDF_${idx}').click()"
+           ondragover="handleDragOver(event,this)" ondragleave="handleDragLeave(event,this)"
+           ondrop="handleDrop(event,'filePDF_${idx}',this)">
+        <div class="file-icon">📄</div>
+        <p>재무제표 PDF 업로드 (BS·PL 모두 포함)</p>
+        <p style="font-size:11px;color:#cbd5e0;margin-top:4px">.pdf 파일</p>
+        <p class="file-name" id="namePDF_${idx}"></p>
+        <input type="file" name="pdf_${idx}" id="filePDF_${idx}" accept=".pdf"
+               onchange="showName(this,'namePDF_${idx}','dropPDF_${idx}')">
       </div>
     </div>
 

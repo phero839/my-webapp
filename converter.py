@@ -132,6 +132,30 @@ def parse_excel(stream, bs_hint=None, pl_hint=None) -> Tuple[Dict, Dict]:
     return bs, pl
 
 
+_BS_CODES = frozenset({
+    "cash","related_ar","other_ar","inventory","securities","investments",
+    "related_loans_recv","other_loans_recv","land_buildings","machinery_vehicles",
+    "other_fixed","intangibles","other_assets","related_ap","other_ap",
+    "related_borrowings","other_borrowings","accrued","other_liabilities",
+    "capital","capital_surplus","retained_earnings","other_equity",
+})
+
+def _split_pdf_accounts(data: Dict) -> Tuple[Dict, Dict]:
+    """단일 PDF에서 파싱된 계정을 BS/PL로 자동 분류."""
+    bs, pl = {}, {}
+    for name, val in data.items():
+        r_bs = keyword_map(name, "bs")
+        if r_bs == "skip":
+            continue
+        if r_bs in _BS_CODES:
+            bs[name] = val
+        else:
+            r_pl = keyword_map(name, "pl")
+            if r_pl != "skip":
+                pl[name] = val
+    return bs, pl
+
+
 def parse_pdf(stream) -> Dict:
     data = {}
     with pdfplumber.open(stream) as pdf:
@@ -152,7 +176,15 @@ def parse_pdf(stream) -> Dict:
 
 def detect_currency_year(stream, fmt: str) -> Tuple[str, int]:
     cur, year = "", 2025
-    currencies = ["USD","JPY","CNY","EUR","SGD","GBP","HKD","AUD","CAD","THB","VND"]
+    currencies = [
+        "USD","JPY","EUR","GBP","CAD","CHF","AUD","NZD","CNH","CNY","HKD",
+        "TWD","MNT","KZT","THB","SGD","IDR","MYR","PHP","VND","BND",
+        "INR","PKR","BDT","KHR","MOP","NPR","LKR","UZS","MMK",
+        "MXN","BRL","ARS","CLP","COP",
+        "SEK","DKK","NOK","RUB","HUF","PLN","CZK","RON",
+        "SAR","QAR","ILS","JOD","KWD","BHD","AED","TRY","OMR",
+        "ZAR","EGP","KES","LYD","ETB","FJD",
+    ]
     if fmt == "excel":
         wb = openpyxl.load_workbook(stream, data_only=True)
         for sname in wb.sheetnames:
@@ -324,7 +356,7 @@ Rules:
 
 Return ONLY JSON: {{"name":"code",...}}"""
     try:
-        r = client.messages.create(model="claude-opus-4-7", max_tokens=3000,
+        r = client.messages.create(model="claude-haiku-4-5-20251001", max_tokens=3000,
                                    messages=[{"role":"user","content":prompt}])
         raw = re.sub(r"^```(?:json)?\n?|\n?```$","",r.content[0].text.strip())
         return json.loads(raw)
@@ -466,8 +498,8 @@ def convert(companies: list) -> bytes:
         if fmt == "excel":
             bs, pl = parse_excel(bs_stream)
         else:
-            bs = parse_pdf(bs_stream)
-            pl = parse_pdf(pl_stream) if pl_stream else {}
+            raw = parse_pdf(bs_stream)
+            bs, pl = _split_pdf_accounts(raw)
 
         mapping = build_mapping(bs, pl, info["company"], info["currency"])
         data    = apply_mapping(bs, pl, mapping)

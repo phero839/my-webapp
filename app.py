@@ -34,11 +34,10 @@ def do_convert():
                 bs_stream = io.BytesIO(f.read())
                 pl_stream = None
             else:
-                bs_f = request.files.get(f"bs_{idx}")
-                pl_f = request.files.get(f"pl_{idx}")
-                if not bs_f: break
-                bs_stream = io.BytesIO(bs_f.read())
-                pl_stream = io.BytesIO(pl_f.read()) if pl_f else None
+                pdf_f = request.files.get(f"pdf_{idx}")
+                if not pdf_f: break
+                bs_stream = io.BytesIO(pdf_f.read())
+                pl_stream = None  # converter가 단일 PDF에서 BS/PL 자동 분류
 
             companies.append({
                 "fmt": fmt, "company": company, "sheet_name": sheet_name,
