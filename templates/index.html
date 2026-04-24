@@ -177,13 +177,25 @@
 let companyCount = 0;
 
 const CURRENCIES = [
-  "USD","JPY","EUR","GBP","CAD","CHF","AUD","NZD","CNH","CNY","HKD",
-  "TWD","MNT","KZT","THB","SGD","IDR","MYR","PHP","VND","BND",
-  "INR","PKR","BDT","KHR","MOP","NPR","LKR","UZS","MMK",
-  "MXN","BRL","ARS","CLP","COP",
-  "SEK","DKK","NOK","RUB","HUF","PLN","CZK","RON",
-  "SAR","QAR","ILS","JOD","KWD","BHD","AED","TRY","OMR",
-  "ZAR","EGP","KES","LYD","ETB","FJD"
+  ["USD","미국 달러"],["JPY","일본 엔"],["EUR","유로"],["GBP","영국 파운드"],
+  ["CAD","캐나다 달러"],["CHF","스위스 프랑"],["AUD","호주 달러"],["NZD","뉴질랜드 달러"],
+  ["CNH","중국 위안(역외)"],["CNY","중국 위안(역내)"],["HKD","홍콩 달러"],
+  ["TWD","대만 달러"],["MNT","몽골 투그릭"],["KZT","카자흐스탄 텡게"],
+  ["THB","태국 바트"],["SGD","싱가포르 달러"],["IDR","인도네시아 루피아"],
+  ["MYR","말레이시아 링깃"],["PHP","필리핀 페소"],["VND","베트남 동"],["BND","브루나이 달러"],
+  ["INR","인도 루피"],["PKR","파키스탄 루피"],["BDT","방글라데시 타카"],
+  ["KHR","캄보디아 리엘"],["MOP","마카오 파타카"],["NPR","네팔 루피"],
+  ["LKR","스리랑카 루피"],["UZS","우즈베키스탄 숨"],["MMK","미얀마 짯"],
+  ["MXN","멕시코 페소"],["BRL","브라질 헤알"],["ARS","아르헨티나 페소"],
+  ["CLP","칠레 페소"],["COP","콜롬비아 페소"],
+  ["SEK","스웨덴 크로나"],["DKK","덴마크 크로네"],["NOK","노르웨이 크로네"],
+  ["RUB","러시아 루블"],["HUF","헝가리 포린트"],["PLN","폴란드 즐로티"],
+  ["CZK","체코 코루나"],["RON","루마니아 레우"],
+  ["SAR","사우디 리얄"],["QAR","카타르 리얄"],["ILS","이스라엘 셰켈"],
+  ["JOD","요르단 디나르"],["KWD","쿠웨이트 디나르"],["BHD","바레인 디나르"],
+  ["AED","UAE 디르함"],["TRY","튀르키예 리라"],["OMR","오만 리얄"],
+  ["ZAR","남아공 랜드"],["EGP","이집트 파운드"],["KES","케냐 실링"],
+  ["LYD","리비아 디나르"],["ETB","에티오피아 비르"],["FJD","피지 달러"],
 ];
 
 function addCompany() {
@@ -236,7 +248,7 @@ function addCompany() {
     <div class="grid-2">
       <div class="field">
         <label>회사명 *</label>
-        <input type="text" name="company_${idx}" placeholder="FACTBLOCK US LLC" required>
+        <input type="text" name="company_${idx}" placeholder="예: ABC Corporation" required>
       </div>
       <div class="field">
         <label>시트명 *</label>
@@ -248,7 +260,7 @@ function addCompany() {
       <div class="field">
         <label>통화</label>
         <select name="currency_${idx}">
-          ${CURRENCIES.map(c=>`<option value="${c}">${c}</option>`).join("")}
+          ${CURRENCIES.map(([code,name])=>`<option value="${code}">${name} (${code})</option>`).join("")}
         </select>
       </div>
       <div class="field">
